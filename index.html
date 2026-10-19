@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>自製電子書 - 生於憂患，死於安樂</title>
+  <style>
+    @page { size: A4; margin: 12mm 15mm; }
+    * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    body {
+      margin: 0; padding: 0; background-color: #e2e8f0;
+      font-family: "Times New Roman", "標楷體", "DFKai-SB", "BiauKai", serif;
+      font-size: 14pt; line-height: 1.5; color: #111;
+    }
+
+    /* 課堂懸浮工具列 (純 Emoji 極簡膠囊) */
+    .classroom-toolbar {
+      position: fixed; top: 14px; right: 20px; z-index: 9999;
+      display: flex; align-items: center; gap: 3px;
+      background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      padding: 4px 8px; border-radius: 40px;
+      border: 1px solid rgba(203, 213, 225, 0.9);
+      box-shadow: 0 4px 22px rgba(0, 0, 0, 0.12);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .tool-btn {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 36px; height: 36px; font-size: 18px; color: #334155;
+      background: transparent; border: 1px solid transparent; border-radius: 50%;
+      cursor: pointer; transition: all 0.15s ease; padding: 0; user-select: none;
+    }
+    .tool-btn:hover { background: #f1f5f9; transform: scale(1.1); }
+    .tool-btn.active { background: #0f172a; color: #ffffff; }
+    .btn-toggle-ans.active { background: #eff6ff; border-color: #3b82f6; }
+    .toolbar-divider { width: 1px; height: 18px; background: #cbd5e1; margin: 0 3px; }
+
+    /* 章節目錄跳轉選單 */
+    .toc-menu {
+      display: none; position: absolute; top: 46px; left: 0;
+      background: #ffffff; border: 1px solid #cbd5e1; border-radius: 12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.18); padding: 6px 0;
+      min-width: 250px; max-height: 420px; overflow-y: auto; z-index: 10000;
+    }
+    .toc-menu.show { display: block; animation: tocFadeIn 0.15s ease-out; }
+    @keyframes tocFadeIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .toc-menu-title {
+      padding: 6px 16px 8px 16px; font-size: 13px; font-weight: bold;
+      color: #64748b; border-bottom: 1px solid #f1f5f9;
+    }
+    .toc-menu-item {
+      padding: 8px 16px; font-size: 14px; color: #334155; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between;
+      transition: background 0.12s, color 0.12s;
+    }
+    .toc-menu-item:hover { background: #eff6ff; color: #2563eb; font-weight: bold; }
+    .toc-page-badge { font-size: 12px; color: #94a3b8; font-weight: normal; }
+    .toc-menu-item:hover .toc-page-badge { color: #2563eb; }
+
+    /* 畫筆面板 */
+    .pen-options {
+      display: none; align-items: center; gap: 6px; background: #f8fafc;
+      padding: 3px 8px; border-radius: 20px; border: 1px solid #e2e8f0; margin-left: 2px;
+    }
+    .color-picker { display: flex; align-items: center; gap: 5px; }
+    .color-dot {
+      width: 16px; height: 16px; border-radius: 50%; cursor: pointer;
+      box-shadow: inset 0 0 0 1px rgba(0,0,0,0.2);
+    }
+    .color-dot.active { transform: scale(1.2); box-shadow: 0 0 0 2px #0f172a; }
+    .size-picker { display: flex; align-items: center; gap: 3px; }
+    .size-btn {
+      border: 1px solid #cbd5e1; background: #fff; color: #475569; font-size: 11px;
+      font-weight: bold; padding: 2px 7px; border-radius: 10px; cursor: pointer;
+    }
+    .size-btn.active { background: #0f172a; color: #fff; border-color: #0f172a; }
+
+    /* A4 頁面容器 */
+    .pages-container { padding: 20px 0 40px 0; }
+    .page {
+      width: 210mm; min-height: 297mm; padding: 14mm 16mm; margin: 0 auto 25px auto;
+      background: #ffffff; box-shadow: 0 6px 16px rgba(0,0,0,0.15);
+      page-break-after: always; break-after: page; position: relative;
+    }
+    .drawing-canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      z-index: 20; pointer-events: none;
+    }
+    body.pen-mode .drawing-canvas { pointer-events: auto; cursor: crosshair; }
+
+    /* 頁面標題與結構 */
+    .page-header {
+      display: flex; justify-content: space-between; border-bottom: 2px solid #334155;
+      padding-bottom: 6px; margin-bottom: 10px; font-size: 13pt; font-weight: bold;
+    }
+    .main-title { font-size: 20pt; font-weight: 900; text-align: center; margin: 6px 0 12px 0; }
+    .section-title {
+      font-size: 15pt; font-weight: bold; background: #e2e8f0; padding: 5px 10px;
+      border-radius: 6px; margin: 10px 0 8px 0; border-left: 6px solid #2563eb;
+    }
+    .task-title { font-size: 14pt; font-weight: bold; margin: 8px 0 6px 0; }
+    .tip-box {
+      border: 1.5px solid #93c5fd; background-color: #eff6ff; border-radius: 6px;
+      padding: 6px 10px; margin: 6px 0 10px 0; font-size: 13pt;
+    }
+    .item-line { padding: 4px 6px; border-radius: 4px; line-height: 1.5; font-size: 14pt; }
+    body:not(.pen-mode) .interactive-item { cursor: pointer; }
+    body:not(.pen-mode) .interactive-item:hover { background-color: #f8fafc; outline: 1px dashed #93c5fd; }
+
+    /* 解答樣式：紅筆圈選與填入 */
+    .correct-choice { display: inline-block; padding: 0 4px; transition: all 0.2s; }
+    .show-ans .correct-choice, .item-line.show-one .correct-choice, .qa-block.show-one .correct-choice, .interactive-item.show-one .correct-choice {
+      color: #dc2626 !important; font-weight: bold !important; border: 2px solid #dc2626 !important;
+      border-radius: 14px !important; background-color: #fef2f2 !important; padding: 0 6px !important;
+    }
+    .ans-slot { display: inline-block; min-width: 24px; text-align: center; color: transparent; font-weight: bold; }
+    .show-ans .ans-slot, .item-line.show-one .ans-slot, .qa-block.show-one .ans-slot, .interactive-item.show-one .ans-slot { color: #dc2626 !important; }
+    .ans-word { color: transparent; font-weight: bold; border-bottom: 1.5px solid #333; padding: 0 6px; }
+    .show-ans .ans-word, .item-line.show-one .ans-word, .interactive-item.show-one .ans-word { color: #dc2626 !important; }
+
+    /* 結構排版 */
+    .grid-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; }
+    .grid-1col { display: flex; flex-direction: column; gap: 6px; }
+
+    /* 選擇題垂直對齊結構 */
+    .qa-block { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; padding: 6px 8px; }
+    .qa-bracket { flex-shrink: 0; width: 54px; text-align: center; font-weight: bold; font-size: 14pt; }
+    .qa-content { flex: 1; }
+    .qa-options { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+
+    table.custom-table { width: 100%; border-collapse: collapse; margin: 8px 0 12px 0; font-size: 14pt; }
+    table.custom-table th, table.custom-table td { border: 1px solid #475569; padding: 5px 10px; text-align: center; }
+    table.custom-table th { background-color: #e2e8f0; font-weight: bold; }
+
+    .toast-notice {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: #0f172a; color: #fff; padding: 10px 20px; border-radius: 30px;
+      font-size: 13px; z-index: 10000; box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+      display: none; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    /* 列印強制隱藏解答、目錄與工具列，還原純淨白紙卷 */
+    @media print {
+      body { background: transparent !important; padding: 0 !important; }
+      .no-print, .classroom-toolbar, .toc-menu, .drawing-canvas { display: none !important; }
+      .page { margin: 0 !important; box-shadow: none !important; width: 100% !important; min-height: auto !important; padding: 0 !important; }
+      .correct-choice { color: inherit !important; font-weight: normal !important; border: none !important; background: transparent !important; padding: 0 !important; }
+      .ans-slot, .ans-word { color: transparent !important; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 課堂懸浮工具列 (純 Emoji 極簡膠囊) -->
+  <div class="classroom-toolbar no-print">
+    <!-- 1. 目錄跳轉按鈕 -->
+    <div style="position: relative;">
+      <button class="tool-btn" id="tocBtn" onclick="toggleTocMenu(event)" title="章節目錄導覽">
+        📑
+      </button>
+      <div class="toc-menu" id="tocMenu">
+        <div class="toc-menu-title">📖 單元章節目錄</div>
+        <div class="toc-menu-item" onclick="jumpTo('page-1')"><span>一、會考題實戰</span><span class="toc-page-badge">P.1</span></div>
+        <div class="toc-menu-item" onclick="jumpTo('sec-warmup')"><span>二、暖身題與文意剖析</span><span class="toc-page-badge">P.1</span></div>
+        <div class="toc-menu-item" onclick="jumpTo('page-2')"><span>三、翻譯大挑戰</span><span class="toc-page-badge">P.2</span></div>
+        <div class="toc-menu-item" onclick="jumpTo('sec-base1')"><span>四、基礎題（第一段分析）</span><span class="toc-page-badge">P.3</span></div>
+        <div class="toc-menu-item" onclick="jumpTo('sec-base2')"><span>五、基礎題（第二段分析）</span><span class="toc-page-badge">P.3</span></div>
+        <div class="toc-menu-item" onclick="jumpTo('sec-challenge')"><span>六、挑戰題：畢業致詞思考</span><span class="toc-page-badge">P.4</span></div>
+      </div>
+    </div>
+
+    <!-- 2. 答案開關 -->
+    <button class="tool-btn btn-toggle-ans" id="toggleAllAnsBtn" onclick="toggleAllAnswers()" title="一鍵全開/全隱答案">
+      <span id="ansIcon">👁️</span>
+    </button>
+    
+    <!-- 3. 畫筆開關 -->
+    <button class="tool-btn" id="penBtn" onclick="togglePenMode()" title="螢光筆/板書筆">
+      ✏️
+    </button>
+    
+    <!-- 4. 畫筆選單 (顏色與粗細) -->
+    <div class="pen-options" id="penOptions">
+      <div class="color-picker">
+        <span class="color-dot active" style="background:#facc15;" onclick="setPenColor('rgba(250, 204, 21, 0.45)', this)" title="螢光黃"></span>
+        <span class="color-dot" style="background:#ef4444;" onclick="setPenColor('rgba(239, 68, 68, 0.8)', this)" title="紅筆"></span>
+        <span class="color-dot" style="background:#3b82f6;" onclick="setPenColor('rgba(37, 99, 235, 0.8)', this)" title="藍筆"></span>
+        <span class="color-dot" style="background:#10b981;" onclick="setPenColor('rgba(16, 185, 129, 0.8)', this)" title="綠筆"></span>
+      </div>
+      <div style="width:1px; height:14px; background:#cbd5e1; margin:0 2px;"></div>
+      <div class="size-picker">
+        <button class="size-btn" onclick="setPenSize(4, this)">細</button>
+        <button class="size-btn" onclick="setPenSize(10, this)">中</button>
+        <button class="size-btn active" onclick="setPenSize(20, this)">粗</button>
+      </div>
+    </div>
+    
+    <!-- 5. 清除畫跡 -->
+    <button class="tool-btn" onclick="clearAllDrawings()" title="清除本卷筆跡">
+      🧹
+    </button>
+    
+    <div class="toolbar-divider"></div>
+    
+    <!-- 6. 純淨列印 -->
+    <button class="tool-btn" onclick="smartPrint()" title="列印純淨學生白紙卷">
+      🖨️
+    </button>
+
+    <!-- 7. 新分頁全螢幕開啟 -->
+    <button class="tool-btn" onclick="openInNewTab()" title="在全螢幕獨立分頁中授課">
+      ↗
+    </button>
+  </div>
+
+  <div id="toastNotice" class="toast-notice"></div>
+
+  <!-- A4 頁面內容區 -->
+  <div class="pages-container">
+    
+    <!-- PAGE 1 -->
+    <div class="page" id="page-1">
+      <canvas class="drawing-canvas"></canvas>
+      <div class="page-header">
+        <span>座號：_______ 姓名：_____________</span>
+        <span>第 1 頁</span>
+      </div>
+
+      <div class="main-title">〈生於憂患，死於安樂〉提問單</div>
+
+      <!-- 會考題 -->
+      <div class="section-title" id="sec-exam">● 會考題觀摩與實戰</div>
+
+      <div class="qa-block interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="qa-bracket">（<span class="ans-slot">A</span>）</div>
+        <div class="qa-content">
+          <div><b>9.</b> 「人生要有所追求。但人們一心追求順境，面對逆境便手足無措；渴望快樂，卻對傷心失了界限，任憑它往深淵裡去；知道要去愛，卻無法承受沒有愛的痛苦，深陷於失落的泥沼中。」根據這段文字，作者認為人們缺乏的最可能是下列何者？ 【109會考補考】</div>
+          <div class="qa-options">
+            <span class="correct-choice">(A) 因應困頓的智慧</span>
+            <span>(B) 追求幸福的方法</span>
+            <span>(C) 堅守道德的勇氣</span>
+            <span>(D) 敢於認錯的精神</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="qa-block interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="qa-bracket">（<span class="ans-slot">B</span>）</div>
+        <div class="qa-content">
+          <div><b>26.</b> 下列文句「　」中的字詞，何者意義前後相同？【104會考】</div>
+          <div class="qa-options">
+            <span>(A) 「曾」不吝情去留／「曾」益其所不能</span>
+            <span class="correct-choice">(B) 「安」能辨我是雄雌／爾「安」敢輕吾射</span>
+            <span>(C) 「行」拂亂其所為／月色入戶，欣然起「行」</span>
+            <span>(D) 「當」窗理雲鬢／使安期有此性，猶「當」無一豪可論</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="qa-block interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="qa-bracket">（<span class="ans-slot">D</span>）</div>
+        <div class="qa-content">
+          <div><b>3.</b> 「柳宗元貶放永州，日子過得孤寂而荒涼。親族朋友不來理睬，地方官員時時監視。災難使他十分狼狽，一度蓬頭垢面，喪魂落魄。但是，災難也給了他一分寧靜，使他有足夠的時間與自然相晤，與自我對話。於是，他進入了最佳的寫作狀態，也讓中國文化史擁有了〈永州八記〉。」這段文字所表達的意涵，與下列何者最接近？</div>
+          <div class="qa-options">
+            <span>(A) 只有經歷過許多痛苦的人，才能夠體會創作的喜悅</span>
+            <span>(B) 作家的使命，就是要揀選一條最艱難的路給自己走</span>
+            <span>(C) 以強勢的語言護衛脆弱的靈魂，才能在災難中轉危為安</span>
+            <span class="correct-choice">(D) 憂患常是激發創作的力量，失意有時反而能寫出精采作品</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 暖身題 -->
+      <div class="section-title" id="sec-warmup">● 暖身題</div>
+
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="task-title">1. 請依據文章題目，拆解可能出現的內容：</div>
+        <table class="custom-table">
+          <tr>
+            <th>標題拆解</th>
+            <th>生於</th>
+            <th>憂患</th>
+            <th>死於</th>
+            <th>安樂</th>
+          </tr>
+          <tr>
+            <th>解釋（內容分類）</th>
+            <td colspan="4"><span class="ans-word">人、事 (國家)</span></td>
+          </tr>
+          <tr>
+            <th>預測</th>
+            <td colspan="4"><span class="ans-word">在憂患中得以生存的道理</span></td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="task-title">2. 承上題，請猜測〈生於憂患，死於安樂〉可能以何種表述手法為主？並據此寫出相對應的內容。</div>
+        <div class="item-line">
+          ☐ 記敘：___________ &nbsp;&nbsp;&nbsp;&nbsp; ☐ 抒情：___________<br>
+          <span class="correct-choice">☑ 議論：論點、論據、論證</span> &nbsp;&nbsp;&nbsp;&nbsp; ☐ 說明：___________
+        </div>
+      </div>
+
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="task-title">3. 請自學〈生於憂患，死於安樂〉後完成表格：</div>
+        <table class="custom-table">
+          <tr>
+            <th style="width: 35%;">閱讀文本前自問</th>
+            <th>概覽文本後自答</th>
+          </tr>
+          <tr>
+            <td style="text-align: left;">
+              人：提到什麼、哪些人？<br>
+              事：主要寫什麼事？<br>
+              時：什麼時候？重要時間點？<br>
+              地：在哪裡？重要地點？<br>
+              理：有無寫出什麼道理？
+            </td>
+            <td style="text-align: left;">
+              人：<span class="ans-word">孟子、舜、傅說、膠革、管夷吾、孫叔敖、百里奚</span><br>
+              事：<span class="ans-word">歷史人物歷經困難的故事</span><br>
+              時：<span class="ans-word">戰國</span><br>
+              地：<span class="ans-word">窮困的地點</span><br>
+              理：<span class="ans-word">艱困環境可以增加能力、國家也是</span>
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="task-title">4. 本課與延伸探索想談的道理相似，請據此推測意思：</div>
+        <table class="custom-table">
+          <tr>
+            <th style="width: 25%;">生於憂患</th>
+            <td style="text-align: left;"><span class="ans-word">在憂患逆境裡會激發人的鬥志而生存。</span></td>
+          </tr>
+          <tr>
+            <th>死於安樂</th>
+            <td style="text-align: left;"><span class="ans-word">在安逸享樂中會怠惰輕忽而毀滅。</span></td>
+          </tr>
+        </table>
+      </div>
+
+    </div>
+
+    <!-- PAGE 2 -->
+    <div class="page" id="page-2">
+      <canvas class="drawing-canvas"></canvas>
+      <div class="page-header">
+        <span>座號：_______ 姓名：_____________</span>
+        <span>第 2 頁</span>
+      </div>
+
+      <div class="section-title" id="sec-trans">● 翻譯大挑戰</div>
+      <div class="tip-box">請完成本課的重要字詞翻譯，填上詞性、解釋或補上省略的詞語。</div>
+
+      <!-- 第一段翻譯 -->
+      <div class="interactive-item" onclick="toggleItemAnswer(this)" style="margin-bottom: 12px;">
+        <div style="font-weight: bold; margin-bottom: 4px;">【第一段】</div>
+        <div class="item-line">
+          孟子曰：「舜發（[動] <span class="ans-word">起</span> ）於（[介] <span class="ans-word">從、由</span> ）畎（[名] <span class="ans-word">田間水溝</span> ）畝（ <span class="ans-word">田中高起的地方</span> ）（畎畝： <span class="ans-word">田野</span> ）之中，
+        </div>
+        <div class="item-line">
+          傅說（音： <span class="ans-word">ㄩㄝˋ</span> ）舉（[動] <span class="ans-word">提拔、任用</span> ）於版（ <span class="ans-word">夾板</span> ）築（ <span class="ans-word">築牆</span> ）（版築： <span class="ans-word">築牆</span> ）之間，
+        </div>
+        <div class="item-line">
+          膠鬲（音： <span class="ans-word">ㄍㄜˊ</span> ）舉於魚鹽（ <span class="ans-word">販賣魚鹽</span> ）之中，
+        </div>
+        <div class="item-line">
+          管夷吾舉於士（ <span class="ans-word">監獄</span> ），
+        </div>
+        <div class="item-line">
+          孫叔敖舉於海（ <span class="ans-word">海濱、海邊</span> ），
+        </div>
+        <div class="item-line">
+          百里奚舉於市（ <span class="ans-word">市場</span> ）。
+        </div>
+        <div class="item-line">
+          故（[連] <span class="ans-word">所以</span> ）天將（[副] <span class="ans-word">將要</span> ）降大任於（[介] <span class="ans-word">給</span> ）是（[代] <span class="ans-word">此</span> ）人也（[助] <span class="ans-word">無義</span> ），必先苦（[動] <span class="ans-word">使……困苦</span> ）其（[代] <span class="ans-word">他的</span> ）心志，勞（[動] <span class="ans-word">使……勞累</span> ）其筋骨，餓（[動] <span class="ans-word">使……飢餓</span> ）其體膚，空（[動] <span class="ans-word">使……貧困、缺乏</span> ）乏其身（ <span class="ans-word">身家</span> ），行（[連] <span class="ans-word">又</span> ）拂（[動] <span class="ans-word">違反</span> ）亂其所為（所為： <span class="ans-word">所作所為</span> ）：所以（ <span class="ans-word">用來</span> ）動（[動] <span class="ans-word">激勵</span> ）心忍（[動] <span class="ans-word">堅忍</span> ）性，曾（通「 <span class="ans-word">增</span> 」，[動] <span class="ans-word">增加</span> ）益（[動] <span class="ans-word">增加</span> ）其（[代] <span class="ans-word">他</span> ）所不能。」
+        </div>
+      </div>
+
+      <!-- 第二段翻譯 -->
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div style="font-weight: bold; margin-bottom: 4px;">【第二段】</div>
+        <div class="item-line">
+          人恆（[副] <span class="ans-word">經常、往往</span> ）過（[動] <span class="ans-word">犯錯</span> ），然後能改。 <span class="ans-word">自己</span> 困（[動] <span class="ans-word">感到困惑、困難</span> ）於（[介] <span class="ans-word">在</span> ）心，衡（[動] 通「 <span class="ans-word">橫</span> 」， <span class="ans-word">阻塞</span> ）於慮（ <span class="ans-word">思慮</span> ），而後（而後： <span class="ans-word">然後</span> ）作（[動] <span class="ans-word">奮發振作</span> ）；
+        </div>
+        <div class="item-line">
+          <span class="ans-word">別人</span> 徵（[動] <span class="ans-word">顯現</span> ）於色（ <span class="ans-word">臉色</span> ），發（[動] <span class="ans-word">表達、流露</span> ）於聲（ <span class="ans-word">言語</span> ），而後 <span class="ans-word">自己</span> 喻（[動] <span class="ans-word">明白</span> ）。
+        </div>
+        <div class="item-line">
+          入（ <span class="ans-word">在國內</span> ）則（[連] <span class="ans-word">如果</span> ）無法（ <span class="ans-word">守法度的</span> ）家（ <span class="ans-word">大夫</span> ）拂（[動] 通「 <span class="ans-word">弼</span> 」， <span class="ans-word">輔佐</span> ）士（ <span class="ans-word">賢士</span> ），出（ <span class="ans-word">在國外</span> ）則無敵國外患者（[助] <span class="ans-word">無義</span> ），國恆（[副] <span class="ans-word">往往</span> ）亡。
+        </div>
+        <div class="item-line">
+          然後知生於（[介] <span class="ans-word">在</span> ）憂患，而（[連] <span class="ans-word">但是、卻</span> ）死於安樂也。」
+        </div>
+      </div>
+
+    </div>
+
+    <!-- PAGE 3 -->
+    <div class="page" id="page-3">
+      <canvas class="drawing-canvas"></canvas>
+      <div class="page-header">
+        <span>座號：_______ 姓名：_____________</span>
+        <span>第 3 頁</span>
+      </div>
+
+      <div class="section-title" id="sec-base1">● 基礎題：第一段結構分析</div>
+
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="task-title">1. 六位聖賢故事與議論元素：</div>
+        <div class="item-line">
+          列舉六位聖賢的故事，是屬於議論元素裡面的（ <span class="correct-choice">論據</span> ）。閱讀課文後請完成下方統整表：
+        </div>
+        
+        <table class="custom-table" style="font-size: 13pt;">
+          <tr>
+            <th>人物</th>
+            <th>地點</th>
+            <th>舉用前的身分</th>
+            <th>舉用後的身分</th>
+            <th>舉用者</th>
+          </tr>
+          <tr>
+            <td>舜</td>
+            <td>畎畝</td>
+            <td>農夫</td>
+            <td>天子</td>
+            <td>堯</td>
+          </tr>
+          <tr>
+            <td>傅說</td>
+            <td>版築</td>
+            <td>工人</td>
+            <td>相</td>
+            <td>殷高宗</td>
+          </tr>
+          <tr>
+            <td>膠鬲</td>
+            <td>魚鹽</td>
+            <td>魚販</td>
+            <td>重臣</td>
+            <td>商紂王</td>
+          </tr>
+          <tr>
+            <td>管夷吾</td>
+            <td>士</td>
+            <td>囚犯</td>
+            <td>相</td>
+            <td>齊桓公／鮑叔牙</td>
+          </tr>
+          <tr>
+            <td>孫叔敖</td>
+            <td>海</td>
+            <td>包庇逃犯者</td>
+            <td>相</td>
+            <td>楚莊王</td>
+          </tr>
+          <tr>
+            <td>百里奚</td>
+            <td>市</td>
+            <td>奴隸</td>
+            <td>大夫</td>
+            <td>秦穆公</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="task-title">2. 六位聖賢故事結束後的延伸段落分析：</div>
+        <div class="item-line">
+          「故天將降大任於是人也，必先苦其心志...」此屬於（ <span class="correct-choice">論點</span> ）。請依據「六位聖賢故事」將此段切成小段落命名：
+        </div>
+        <table class="custom-table">
+          <tr>
+            <th>憂患的<span class="ans-word">承擔者</span></th>
+            <th>憂患的<span class="ans-word">過程</span></th>
+            <th>憂患的<span class="ans-word">目的</span></th>
+            <th>憂患<span class="ans-word">賦予者</span></th>
+          </tr>
+          <tr>
+            <td>是人</td>
+            <td>苦其心志，勞其筋骨，餓其體膚，空乏其身，行拂亂其所為</td>
+            <td>降大任</td>
+            <td>天</td>
+          </tr>
+          <tr>
+            <th colspan="4">憂患的功用</th>
+          </tr>
+          <tr>
+            <td colspan="4"><span class="ans-word">動心忍性，曾益其所不能</span></td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="item-line"><b>3.</b> 依據統整表的內容，其論點與論據（ <span class="correct-choice">完全</span> ）扣合。</div>
+        <div class="item-line"><b>4.</b> 作者以（ <span class="correct-choice">故</span> ）字來承接第一段中的論點與論據。</div>
+        <div class="item-line"><b>5.</b> 請判斷第一段作者採用哪些論證方式？</div>
+        <div class="item-line" style="padding-left: 15px;">
+          <span class="correct-choice">舉例</span> &nbsp;&nbsp;&nbsp;&nbsp;
+          <span class="correct-choice">正證</span> &nbsp;&nbsp;&nbsp;&nbsp;
+          ☐ 反證 &nbsp;&nbsp;&nbsp;&nbsp;
+          ☐ 比較 &nbsp;&nbsp;&nbsp;&nbsp;
+          ☐ 比喻 &nbsp;&nbsp;&nbsp;&nbsp;
+          <span class="correct-choice">歸納</span> &nbsp;&nbsp;&nbsp;&nbsp;
+          ☐ 演繹
+        </div>
+      </div>
+
+      <div class="section-title" id="sec-base2">● 基礎題：第二段結構分析</div>
+
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="item-line"><b>1.</b> 第二段的前半段：「人恆過，然後能改...國恆亡。」這是屬於議論元素裡的（ <span class="correct-choice">論據</span> ）。</div>
+        <div class="item-line"><b>2-4.</b> 請觀察下表的兩次分法架構，填入對應文句：「然後知生於憂患，而死於安樂也。」是屬於（ <span class="correct-choice">論點</span> ）。</div>
+
+        <table class="custom-table" style="font-size: 12pt;">
+          <tr>
+            <th>先分兩部分</th>
+            <td colspan="2">個人</td>
+            <td colspan="2">國家</td>
+          </tr>
+          <tr>
+            <th>再分兩部分</th>
+            <td>自知自覺（內在反省）</td>
+            <td>他知他覺（外在督促）</td>
+            <td>國內</td>
+            <td>國外</td>
+          </tr>
+          <tr>
+            <th>憂患過程</th>
+            <td><span class="ans-word">困於心，衡於慮，而後作</span></td>
+            <td><span class="ans-word">徵於色，發於聲，而後喻</span></td>
+            <td><span class="ans-word">無法家拂士</span></td>
+            <td><span class="ans-word">無敵國外患</span></td>
+          </tr>
+          <tr>
+            <th>結果</th>
+            <td colspan="2"><span class="ans-word">人恆過，然後能改</span></td>
+            <td colspan="2"><span class="ans-word">國恆亡</span></td>
+          </tr>
+          <tr>
+            <th>結論</th>
+            <td colspan="2"><span class="ans-word">生於憂患</span></td>
+            <td colspan="2"><span class="ans-word">死於安樂</span></td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="item-line"><b>5.</b> 依據上表內容，其論點與論據（ <span class="correct-choice">完全</span> ）扣合。</div>
+        <div class="item-line"><b>6.</b> 作者以（ <span class="correct-choice">然後知</span> ）來承接第二段中的論點與論據。</div>
+        <div class="item-line"><b>7.</b> 請判斷第二段作者採用哪些論證方式？</div>
+        <div class="item-line" style="padding-left: 15px;">
+          ☐ 舉例 &nbsp;&nbsp;&nbsp;&nbsp;
+          <span class="correct-choice">正證</span> &nbsp;&nbsp;&nbsp;&nbsp;
+          <span class="correct-choice">反證</span> &nbsp;&nbsp;&nbsp;&nbsp;
+          <span class="correct-choice">比較</span> &nbsp;&nbsp;&nbsp;&nbsp;
+          ☐ 比喻 &nbsp;&nbsp;&nbsp;&nbsp;
+          ☐ 歸納 &nbsp;&nbsp;&nbsp;&nbsp;
+          <span class="correct-choice">演繹</span>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- PAGE 4 -->
+    <div class="page" id="page-4">
+      <canvas class="drawing-canvas"></canvas>
+      <div class="page-header">
+        <span>座號：_______ 姓名：_____________</span>
+        <span>第 4 頁</span>
+      </div>
+
+      <div class="section-title" id="sec-challenge">● 挑戰題</div>
+
+      <div class="interactive-item" onclick="toggleItemAnswer(this)">
+        <div class="task-title">1. 請觀賞美國首席大法官羅伯茲 (John Roberts) 在兒子高中畢業典禮的致詞，他希望這群畢業生能遭遇哪些不幸而藉此學習體悟到什麼？</div>
+        
+        <table class="custom-table" style="margin-top: 15px;">
+          <tr>
+            <th style="width: 40%;">不 幸</th>
+            <th>學習體悟</th>
+          </tr>
+          <tr>
+            <td>不平等的對待</td>
+            <td><span class="ans-word">公平正義的價值</span></td>
+          </tr>
+          <tr>
+            <td>被背叛</td>
+            <td><span class="ans-word">忠誠的重要</span></td>
+          </tr>
+          <tr>
+            <td>感到孤單</td>
+            <td><span class="ans-word">不把朋友視為當然</span></td>
+          </tr>
+          <tr>
+            <td>對手幸災樂禍自己的失敗</td>
+            <td><span class="ans-word">運動家精神的重要</span></td>
+          </tr>
+          <tr>
+            <td>被忽略</td>
+            <td><span class="ans-word">懂得傾聽他人</span></td>
+          </tr>
+          <tr>
+            <td>足夠痛苦</td>
+            <td><span class="ans-word">同情心</span></td>
+          </tr>
+        </table>
+      </div>
+
+      <div style="margin-top: 40px; padding: 15px; border: 1px dashed #cbd5e1; border-radius: 8px; background: #fafafa;">
+        <div style="font-weight: bold; color: #475569; margin-bottom: 8px;">💡 學習省思筆記：</div>
+        <div style="height: 120px; border-bottom: 1px solid #e2e8f0; margin-bottom: 10px;"></div>
+        <div style="height: 120px; border-bottom: 1px solid #e2e8f0;"></div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- 互動腳本 -->
+  <script>
+    // 0. 目錄面板切換與平滑跳轉
+    function toggleTocMenu(e) {
+      if (e) e.stopPropagation();
+      const menu = document.getElementById('tocMenu');
+      if (menu) menu.classList.toggle('show');
+    }
+
+    function jumpTo(targetId) {
+      const el = document.getElementById(targetId);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+      const menu = document.getElementById('tocMenu');
+      if (menu) menu.classList.remove('show');
+    }
+
+    document.addEventListener('click', (e) => {
+      const menu = document.getElementById('tocMenu');
+      const btn = document.getElementById('tocBtn');
+      if (menu && menu.classList.contains('show')) {
+        if (!menu.contains(e.target) && e.target !== btn) {
+          menu.classList.remove('show');
+        }
+      }
+    });
+
+    // 1. 逐題點擊顯現答案
+    function toggleItemAnswer(el) {
+      if (document.body.classList.contains('pen-mode')) return;
+      el.classList.toggle('show-one');
+    }
+
+    // 2. 一鍵全開 / 全隱答案
+    var isAllAnsShown = false;
+    function toggleAllAnswers() {
+      isAllAnsShown = !isAllAnsShown;
+      var container = document.querySelector('.pages-container');
+      var btn = document.getElementById('toggleAllAnsBtn');
+      var btnIcon = document.getElementById('ansIcon');
+      if (isAllAnsShown) {
+        container.classList.add('show-ans'); btn.classList.add('active'); btnIcon.textContent = '🙈';
+      } else {
+        container.classList.remove('show-ans'); btn.classList.remove('active'); btnIcon.textContent = '👁️';
+        document.querySelectorAll('.show-one').forEach(function(item) { item.classList.remove('show-one'); });
+      }
+    }
+
+    // 3. 畫筆工具
+    var isPenMode = false;
+    var currentPenColor = 'rgba(250, 204, 21, 0.45)';
+    var currentPenSize = 20;
+    function setPenColor(color, el) {
+      currentPenColor = color;
+      document.querySelectorAll('.color-dot').forEach(function(d) { d.classList.remove('active'); });
+      el.classList.add('active');
+    }
+    function setPenSize(size, el) {
+      currentPenSize = size;
+      document.querySelectorAll('.size-btn').forEach(function(b) { b.classList.remove('active'); });
+      el.classList.add('active');
+    }
+    function togglePenMode() {
+      isPenMode = !isPenMode;
+      document.body.classList.toggle('pen-mode', isPenMode);
+      var penBtn = document.getElementById('penBtn');
+      var penOptions = document.getElementById('penOptions');
+      if (isPenMode) { penBtn.classList.add('active'); if (penOptions) penOptions.style.display = 'flex'; }
+      else { penBtn.classList.remove('active'); if (penOptions) penOptions.style.display = 'none'; }
+    }
+    function initCanvases() {
+      document.querySelectorAll('.page').forEach(function(page) {
+        var canvas = page.querySelector('.drawing-canvas');
+        if (!canvas) return;
+        var ctx = canvas.getContext('2d');
+        function resizeCanvas() { canvas.width = page.clientWidth; canvas.height = page.clientHeight; }
+        resizeCanvas(); window.addEventListener('resize', resizeCanvas);
+        var isDrawing = false, lastX = 0, lastY = 0;
+        canvas.addEventListener('mousedown', function(e) {
+          if (!isPenMode) return; isDrawing = true;
+          var rect = canvas.getBoundingClientRect(); lastX = e.clientX - rect.left; lastY = e.clientY - rect.top;
+        });
+        canvas.addEventListener('mousemove', function(e) {
+          if (!isDrawing || !isPenMode) return;
+          var rect = canvas.getBoundingClientRect(); var currX = e.clientX - rect.left; var currY = e.clientY - rect.top;
+          ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(currX, currY);
+          ctx.strokeStyle = currentPenColor; ctx.lineWidth = currentPenSize; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.stroke();
+          lastX = currX; lastY = currY;
+        });
+        window.addEventListener('mouseup', function() { isDrawing = false; });
+      });
+    }
+    window.addEventListener('load', initCanvases);
+    function clearAllDrawings() {
+      document.querySelectorAll('.drawing-canvas').forEach(function(canvas) {
+        var ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, canvas.width, canvas.height);
+      });
+    }
+
+    function showToast(msg) {
+      var toast = document.getElementById('toastNotice');
+      if (!toast) return;
+      toast.textContent = msg;
+      toast.style.display = 'block';
+      setTimeout(function() { toast.style.display = 'none'; }, 3000);
+    }
+
+    // 4. 智慧新分頁純淨輸出白紙卷
+    function getCleanWorksheetHTML(triggerPrintImmediately) {
+      var clonedDoc = document.documentElement.cloneNode(true);
+      var container = clonedDoc.querySelector('.pages-container');
+      if (container) container.classList.remove('show-ans');
+      clonedDoc.querySelectorAll('.show-one').forEach(function(item) {
+        item.classList.remove('show-one');
+      });
+      var toast = clonedDoc.querySelector('#toastNotice');
+      if (toast) toast.remove();
+
+      if (triggerPrintImmediately) {
+        var autoPrintScript = document.createElement('script');
+        autoPrintScript.textContent = 'window.addEventListener("load", function() { setTimeout(function() { window.print(); }, 400); });';
+        clonedDoc.querySelector('body').appendChild(autoPrintScript);
+      }
+      return '<!DOCTYPE html>\n<html lang="zh-TW">' + clonedDoc.innerHTML + '</html>';
+    }
+
+    function smartPrint() {
+      try {
+        var htmlContent = getCleanWorksheetHTML(true);
+        var blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+        var blobUrl = URL.createObjectURL(blob);
+        var win = window.open(blobUrl, '_blank');
+        if (!win) {
+          showToast('若列印視窗未跳出，請點擊「↗」或允許彈跳視窗！');
+          window.print();
+        }
+      } catch (e) {
+        window.print();
+      }
+    }
+
+    function openInNewTab() {
+      try {
+        var htmlContent = getCleanWorksheetHTML(false);
+        var blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+        var blobUrl = URL.createObjectURL(blob);
+        var win = window.open(blobUrl, '_blank');
+        if (!win) {
+          showToast('請允許瀏覽器彈出式視窗，以順利在新分頁打開講義！');
+        }
+      } catch (e) {
+        showToast('無法在新分頁開啟，請嘗試手動下載。');
+      }
+    }
+  </script>
+</body>
+</html>
